@@ -1,0 +1,144 @@
+#
+# These work for desktop 
+#
+#These will need to be updated for prod
+$api_server_url = "https://platform.devtest.ringcentral.com"
+$media_server_url = "https://media.devtest.ringcentral.com:443"
+$username = '<user_name>'
+$password = '<password>'
+$extension = '<test extension>'
+ 
+#Base64 encoded strings as : Appkey:Appsecurity_key   use this site: https://www.base64encode.org/ or build your own. it never changes so meh
+$app_key = "<APP KEY>"
+ 
+$log_path = "C:\scripts\log\ringcentral.log"
+#
+# No config changes needed beyond this point needed
+#
+ 
+#Global authorization object. This will be handed through functions/etc to maintain authorization
+    $auth_obj = [PSCustomObject] @{
+    Isset = $false
+    }
+   
+ 
+#Called from get-authstatus this creates the initial authorization tokens and populates the global $auth_obj with that data
+#It also returns the object for parsing, or False for a failure and logs the error.
+function auth_initiate() {
+   
+    #Authentication post data
+    $auth_post = @{
+    grant_type = 'password'
+    username = $username
+    password = $password
+    extension = $extension
+    }
+
+	$headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+	$headers.Add("Authorization", "Basic $app_key")
+	$headers.Add("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+ 
+    try {
+    $url = $api_server_url + "/restapi/oauth/token"
+    $auth_token = invoke-restmethod -Method Post -Uri $url -Body $auth_post -headers $headers -ContentType "application/x-www-form-urlencoded"
+    $authorization = $auth_token.token_type + " " +$auth_token.Access_token
+    } catch {
+    echo "Error refresh token: $_" >> $log_path
+    return $False
+    }
+   
+    $Global:auth_obj = [PSCustomObject] @{
+    Isset = $true
+    authorization = $authorization
+    refresh_token = $auth_token.refresh_token
+    expires_in = (Get-date).Addseconds($auth_token.expires_in)
+    refresh_token_expires_in = (Get-date).Addseconds($auth_token.refresh_token_expires_in)
+    scope = $auth_token.scope
+    owner_id = $auth_token.owner_id
+    endpoint_id = $auth_token.endpoint_id
+    }
+
+return $auth_obj
+}
+ 
+#Called from get-authstatus this refreshes authorization tokens and populates the global $auth_obj with that data
+#It also returns the object for parsing, or False for a failure and logs the error.
+function auth_refresh() {
+    $refresh_post  = @{
+    grant_type = 'refresh_token'
+    refresh_token = $auth_token.refresh_token
+    }
+ 
+    $url = $api_server_url + "/restapi/oauth/token"
+
+	$headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+	$headers.Add("Authorization", "Basic $app_key")
+	$headers.Add("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+ 
+    try {
+    $auth_token = invoke-restmethod -Method Post -Uri $url -Body $refresh_post -headers $headers -ContentType "application/x-www-form-urlencoded"
+    $authorization = $auth_token.token_type + " " +$auth_token.Access_token
+    } catch {
+    echo "Error refresh token: $_" >> $log_path
+    return $false
+    }
+   
+    $Global:auth_obj = [PSCustomObject] @{
+    Isset = $true
+    authorization = $authorization
+    refresh_token = $auth_token.refresh_token
+    expires_in = (Get-date).Addseconds($auth_token.expires_in)
+    refresh_token_expires_in = (Get-date).Addseconds($auth_token.refresh_token_expires_in)
+    scope = $auth_token.scope
+    owner_id = $auth_token.owner_id
+    endpoint_id = $auth_token.endpoint_id
+    }
+   
+return $auth_obj
+}
+ 
+ 
+function get-authstatus() {
+    
+	if(($auth_obj.expires_in -gt (get-date)) -and ($auth_obj.isset -eq $true)) {
+    return $true
+    } elseif(($auth_obj.expires_in -lt (get-date)) -and ($auth_obj.isset -eq $true) -and ($auth_object.refresh_token_expires_in -gt (get-date)) {
+    
+		if(auth_refresh) {
+        echo "Token expired and refreshed successfully" >> $log_path
+        return $true
+        } else {
+        echo "Failed Token refresh" >> $log_path
+        return $false
+        }
+    
+	} else {
+    
+		if(auth_initiate) {
+        echo "Initializing Auth token">> $log_path
+        return $true
+        }
+    }
+}
+ 
+ 
+#
+# Example of making a call to the api
+#
+Function get-calllog() {
+if(get-authstatus) {
+    $auth_token = $auth_obj.authorization
+    } else {
+    return $false
+    }
+try {
+$call = invoke-restmethod -uri "$api_server_url/restapi/v1.0/account/~/call-log"  -Headers @{"Authorization" = "$auth_token"}
+} catch {
+return $false
+}
+return $call
+}
+
+#test if auth works:
+#get-authstatus
+#$auth_token = $auth_obj.authorization
